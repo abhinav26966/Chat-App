@@ -116,15 +116,3 @@ A cutting-edge, full-stack real-time chat application built with the MERN stack 
 - HTTP-only cookies.
 
 ---
-
-## 🎯 Future Enhancements
-
-- **🗨️ Group Chat Functionality**
-- **🔑 Message Encryption**
-- **📞 Voice and Video Calls**
-- **👍 Message Reactions**
-- **✔️ Read Receipts**
-- **👤 User Profiles**
-- **🔍 Message Search Functionality**
-
-----------------------------------------------
