@@ -46,7 +46,7 @@ A full-stack real-time chat application built with the MERN stack and WebSocket 
 
 1. **Clone the Repository**
    ```bash
-   git clone https://github.com/yourusername/mern-chat.git
+   git clone https://github.com/abhinav26966/Chat-App.git
    ```
 
 2. **Install Backend Dependencies**
