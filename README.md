@@ -1,6 +1,6 @@
 # 💬 MernChat - Real-Time Chat Application
 
-A cutting-edge, full-stack real-time chat application built with the MERN stack (MongoDB, Express.js, React.js, Node.js) and WebSocket technology for seamless communication.
+A full-stack real-time chat application built with the MERN stack and WebSocket technology for seamless communication.
 
 ---
 
