@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - run: echo "TAG=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+      - name: npm audit
+        continue-on-error: true
+        run: cd api && npm audit --omit=dev
+      - name: Secret scan
+        run: docker run --rm -v $PWD:/src aquasec/trivy:0.58.1 fs --scanners secret --exit-code 1 /src
+      - run: helm lint deploy/chart
+      - uses: helm/kind-action@1544676c07bb3570fcb70166beaa07c4528fd4aa # v1.15.1
+        with:
+          cluster_name: chat-app
+      - name: Deploy
+        run: ./scripts/deploy.sh
+      - name: Image scan
+        run: |
+          for img in chat-api:$TAG chat-client:$TAG; do
+            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.58.1 image --severity HIGH,CRITICAL --ignore-unfixed $img
+          done
+      - name: Smoke test
+        run: |
+          kubectl -n chat-app port-forward svc/api 4040:4040 &
+          ./scripts/smoke.sh
+      - if: failure()
+        run: kubectl -n chat-app get pods && kubectl -n chat-app logs deploy/api --tail=50
+
+  release:
+    needs: build
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+      - run: |
+          TAG=$(git rev-parse --short HEAD)
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+          for app in api client; do
+            docker build -t ghcr.io/${{ github.repository_owner }}/chat-$app:$TAG --build-arg VERSION=$TAG $app
+            docker push ghcr.io/${{ github.repository_owner }}/chat-$app:$TAG
+          done

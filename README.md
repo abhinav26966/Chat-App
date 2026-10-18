@@ -116,3 +116,28 @@ A full-stack real-time chat application built with the MERN stack and WebSocket 
 - HTTP-only cookies.
 
 ---
+
+## Running on Kubernetes
+
+Needs docker, kind, kubectl and helm.
+
+```bash
+./scripts/deploy.sh
+kubectl -n chat-app port-forward svc/api 4040:4040
+kubectl -n chat-app port-forward svc/client 5173:8080
+```
+
+Open http://localhost:5173. `deploy.sh` creates a kind cluster, builds the images tagged with the git commit, creates the secrets on first run and installs the helm chart. `curl localhost:4040/readyz` shows which commit is running, `./scripts/smoke.sh` runs a quick register/login check.
+
+Monitoring (Prometheus, Grafana, alerts) and tracing (Jaeger):
+
+```bash
+./scripts/monitoring.sh
+./scripts/deploy.sh --set monitoring=true
+kubectl -n monitoring port-forward svc/monitoring-grafana 3000:80
+kubectl -n chat-app port-forward svc/jaeger 16686:16686
+```
+
+Grafana password: `kubectl -n monitoring get secret monitoring-grafana -o jsonpath='{.data.admin-password}' | base64 -d`
+
+Rollback: `helm -n chat-app history chat-app` then `helm -n chat-app rollback chat-app <revision>`.
