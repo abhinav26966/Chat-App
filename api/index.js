@@ -1,4 +1,5 @@
 const express = require('express');
+require('express-async-errors');
 const mongoose = require('mongoose');
 const cookieParser = require('cookie-parser');
 const dotenv = require('dotenv');
@@ -9,6 +10,7 @@ const User = require('./models/User');
 const Message = require('./models/Message');
 const ws = require('ws');
 const fs = require('fs');
+const prom = require('prom-client');
 
 dotenv.config();
 mongoose.connect(process.env.MONGO_URL, (err) => {
@@ -21,7 +23,19 @@ mongoose.connect(process.env.MONGO_URL, (err) => {
 const jwtSecret = process.env.JWT_SECRET;
 const bcryptSalt = bcrypt.genSaltSync(10);
 
+prom.collectDefaultMetrics();
+const httpDuration = new prom.Histogram({
+  name: 'http_request_duration_seconds',
+  help: 'HTTP request duration',
+  labelNames: ['method', 'route', 'status'],
+});
+
 const app = express();
+app.use((req,res,next) => {
+  const end = httpDuration.startTimer();
+  res.on('finish', () => end({method:req.method, route:req.route?.path || 'other', status:res.statusCode}));
+  next();
+});
 app.use('/uploads', express.static(__dirname + '/uploads'));
 app.use(express.json());
 app.use(cookieParser());
@@ -49,9 +63,26 @@ app.get('/test', (req,res) => {
   res.json('test ok');
 });
 
+app.get('/healthz', (req,res) => {
+  res.json('ok');
+});
+
+app.get('/readyz', (req,res) => {
+  const ready = mongoose.connection.readyState === 1;
+  res.status(ready ? 200 : 503).json({db: ready ? 'up' : 'down', version: process.env.APP_VERSION});
+});
+
+app.get('/metrics', async (req,res) => {
+  res.set('Content-Type', prom.register.contentType);
+  res.end(await prom.register.metrics());
+});
+
 app.get('/messages/:userId', async (req,res) => {
   const {userId} = req.params;
-  const userData = await getUserDataFromRequest(req);
+  const userData = await getUserDataFromRequest(req).catch(() => null);
+  if (!userData) {
+    return res.status(401).json('no token');
+  }
   const ourUserId = userData.userId;
   const messages = await Message.find({
     sender:{$in:[userId,ourUserId]},
@@ -88,8 +119,10 @@ app.post('/login', async (req,res) => {
           id: foundUser._id,
         });
       });
+      return;
     }
   }
+  res.status(401).json('wrong username or password');
 });
 
 app.post('/logout', (req,res) => {
@@ -116,7 +149,7 @@ app.post('/register', async (req,res) => {
   }
 });
 
-const server = app.listen(4040);
+const server = app.listen(process.env.PORT || 4040);
 
 const wss = new ws.WebSocketServer({server});
 wss.on('connection', (connection, req) => {
@@ -124,7 +157,7 @@ wss.on('connection', (connection, req) => {
   function notifyAboutOnlinePeople() {
     [...wss.clients].forEach(client => {
       client.send(JSON.stringify({
-        online: [...wss.clients].map(c => ({userId:c.userId,username:c.username})),
+        online: [...wss.clients].filter(c => c.userId).map(c => ({userId:c.userId,username:c.username})),
       }));
     });
   }
@@ -149,12 +182,12 @@ wss.on('connection', (connection, req) => {
   // read username and id form the cookie for this connection
   const cookies = req.headers.cookie;
   if (cookies) {
-    const tokenCookieString = cookies.split(';').find(str => str.startsWith('token='));
+    const tokenCookieString = cookies.split(';').find(str => str.trim().startsWith('token='));
     if (tokenCookieString) {
       const token = tokenCookieString.split('=')[1];
       if (token) {
         jwt.verify(token, jwtSecret, {}, (err, userData) => {
-          if (err) throw err;
+          if (err) return;
           const {userId, username} = userData;
           connection.userId = userId;
           connection.username = username;
@@ -163,7 +196,8 @@ wss.on('connection', (connection, req) => {
     }
   }
 
-  connection.on('message', async (message) => {
+  const onMessage = async (message) => {
+    if (!connection.userId) return;
     const messageData = JSON.parse(message.toString());
     const {recipient, text, file} = messageData;
     let filename = null;
@@ -196,6 +230,9 @@ wss.on('connection', (connection, req) => {
           _id:messageDoc._id,
         })));
     }
+  };
+  connection.on('message', (message) => {
+    onMessage(message).catch(err => console.log('message error', err.message));
   });
 
   // notify everyone about online people (when someone connects)
