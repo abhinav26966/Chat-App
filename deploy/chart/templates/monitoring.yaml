@@ -1,0 +1,56 @@
+{{- if .Values.monitoring }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: api
+spec:
+  selector:
+    matchLabels: {app: api}
+  endpoints: [{port: http, interval: 15s}]
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: api
+spec:
+  groups:
+    - name: chat-api
+      rules:
+        - alert: ApiDown
+          expr: absent(up{namespace="{{ .Release.Namespace }}", service="api"} == 1)
+          for: 2m
+        - alert: ApiErrors
+          expr: sum(rate(http_request_duration_seconds_count{status=~"5..", route!~"/metrics|/healthz|/readyz"}[5m])) / sum(rate(http_request_duration_seconds_count{route!~"/metrics|/healthz|/readyz"}[5m])) > 0.01
+          for: 5m
+        - alert: ApiSlow
+          expr: histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{route!~"/metrics|/healthz|/readyz"}[5m]))) > 0.3
+          for: 10m
+        - alert: ApiRestarting
+          expr: increase(kube_pod_container_status_restarts_total{namespace="{{ .Release.Namespace }}", container="api"}[15m]) > 0
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jaeger
+spec:
+  selector:
+    matchLabels: {app: jaeger}
+  template:
+    metadata:
+      labels: {app: jaeger}
+    spec:
+      containers:
+        - name: jaeger
+          image: jaegertracing/jaeger:2.22.0
+          ports: [{containerPort: 4318}, {containerPort: 16686}]
+          resources:
+            limits: {memory: 512Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jaeger
+spec:
+  selector: {app: jaeger}
+  ports: [{name: otlp, port: 4318}, {name: ui, port: 16686}]
+{{- end }}
